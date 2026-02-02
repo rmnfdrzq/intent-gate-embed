@@ -1,0 +1,26 @@
+{
+  "name": "intent-gate-embed",
+  "version": "1.0.0",
+  "description": "Intent Gate embed script for job application forms",
+  "main": "dist/gate-embed.min.js",
+  "scripts": {
+    "build": "node build.js",
+    "build:watch": "node build.js --watch",
+    "serve": "node build.js && npx serve dist -p 8080"
+  },
+  "keywords": [
+    "intent-gate",
+    "embed",
+    "form",
+    "gatekeeper"
+  ],
+  "author": "Intent Gate",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
