@@ -1,24 +1,23 @@
 /**
  * Intent Gate Embed Script
  *
- * Auto Form Detection v1: precheck page URL, auto-detect application form.
+ * Auto gate resolution by page URL. No data-gate-id required.
  * Token persisted in localStorage. Gate opens in new tab; token via postMessage.
  *
- * @version 4.0.0
+ * @version 5.0.0
  */
 (function () {
   "use strict";
 
-  var API_BASE = "http://localhost:3000";
-  var GATE_UI_BASE = "http://localhost:5173";
-  var GATE_UI_ORIGIN = "http://localhost:5173";
-  var DEFAULT_TIMEOUT_MS = 10000;
-  var HANDSHAKE_TIMEOUT_MS = 5000;
-  var MUTATION_OBSERVER_TIMEOUT_MS = 8000;
-  var DEBOUNCE_MS = 250;
-  var SCORE_THRESHOLD = 5;
-  var SCORE_GAP_REQUIRED = 2;
-  var DEBUG = false;
+  var API_BASE = __API_BASE__;
+  var GATE_UI_BASE = __GATE_UI_BASE__;
+  var GATE_UI_ORIGIN = __GATE_UI_ORIGIN__;
+  var HANDSHAKE_TIMEOUT_MS = __HANDSHAKE_TIMEOUT_MS__;
+  var MUTATION_OBSERVER_TIMEOUT_MS = __MUTATION_OBSERVER_TIMEOUT_MS__;
+  var DEBOUNCE_MS = __DEBOUNCE_MS__;
+  var SCORE_THRESHOLD = __SCORE_THRESHOLD__;
+  var SCORE_GAP_REQUIRED = __SCORE_GAP_REQUIRED__;
+  var DEBUG = __DEBUG__;
 
   var IG_READY = "IG_READY";
   var IG_INIT = "IG_INIT";
@@ -39,17 +38,17 @@
   }
 
   function getConfig() {
-    var gateId = scriptElement.getAttribute("data-gate-id");
+    var siteKey = scriptElement.getAttribute("data-site-key");
     var formSelector = scriptElement.getAttribute("data-form-selector");
     var submitSelector = scriptElement.getAttribute("data-submit-selector");
 
-    if (!gateId) {
-      console.warn("[IntentGate] Missing required attribute: data-gate-id");
+    if (!siteKey) {
+      console.warn("[IntentGate] Missing required attribute: data-site-key");
       return null;
     }
 
     return {
-      gateId: gateId,
+      siteKey: siteKey,
       formSelector: formSelector || null,
       submitSelector: submitSelector || null,
     };
@@ -83,12 +82,10 @@
     });
   }
 
-  function precheck(config) {
-    return apiRequest("POST", "/v1/gates/" + encodeURIComponent(config.gateId) + "/embed/precheck", {
-      origin: window.location.origin,
+  function resolveGate(config) {
+    return apiRequest("POST", "/v1/gates/resolve", {
+      siteKey: config.siteKey,
       pageUrl: window.location.href,
-    }).then(function (r) {
-      return r && r.ok === true;
     });
   }
 
@@ -168,59 +165,6 @@
       return false;
     } catch (e) {
       return false;
-    }
-  }
-
-  function showMessage(form, message, type) {
-    var existing = form.querySelector(".intent-gate-message");
-    if (existing) existing.remove();
-
-    var msgEl = document.createElement("div");
-    msgEl.className = "intent-gate-message";
-    msgEl.style.cssText =
-      "padding: 12px 16px; margin: 12px 0; border-radius: 4px; font-size: 14px;";
-
-    if (type === "error") {
-      msgEl.style.cssText += "background: #fef2f2; color: #991b1b; border: 1px solid #fecaca;";
-    } else {
-      msgEl.style.cssText += "background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;";
-    }
-
-    msgEl.textContent = message;
-    form.insertBefore(msgEl, form.firstChild);
-  }
-
-  function showFallbackLink(form, config) {
-    var existing = form.querySelector(".intent-gate-message");
-    if (existing) existing.remove();
-
-    var msgEl = document.createElement("div");
-    msgEl.className = "intent-gate-message";
-    msgEl.style.cssText =
-      "padding: 12px 16px; margin: 12px 0; border-radius: 4px; font-size: 14px; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;";
-
-    var url = GATE_UI_BASE + "/g/" + encodeURIComponent(config.gateId);
-    msgEl.innerHTML =
-      "Popups may be blocked. Please allow popups and <a href='" +
-      url +
-      "' target='_blank' rel='noopener'>click here to open the check</a>.";
-    form.insertBefore(msgEl, form.firstChild);
-  }
-
-  function hideMessage(form) {
-    var existing = form.querySelector(".intent-gate-message");
-    if (existing) existing.remove();
-  }
-
-  function setButtonLoading(button, loading) {
-    if (loading) {
-      button.disabled = true;
-      button.setAttribute("data-original-text", button.textContent);
-      button.textContent = "Please wait...";
-    } else {
-      button.disabled = false;
-      var originalText = button.getAttribute("data-original-text");
-      if (originalText) button.textContent = originalText;
     }
   }
 
@@ -552,50 +496,43 @@
 
   function openGateAndHandshake(config, form, submitButton, tokenId) {
     var gateWindow = openGateInNewTab(config);
-
     if (!gateWindow) {
-      showFallbackLink(form, config);
-      setButtonLoading(submitButton, false);
-      return;
+      console.warn("[IntentGate] Popup blocked, could not open gate");
+      return Promise.resolve();
     }
-
-    performHandshake(config, tokenId, gateWindow)
-      .then(function () {
-        showMessage(
-          form,
-          "A short check opened in a new tab. Complete it, then return here and click Submit again.",
-          "info"
-        );
-      })
-      .catch(function () {
-        showFallbackLink(form, config);
-      })
-      .finally(function () {
-        setButtonLoading(submitButton, false);
-      });
+    return performHandshake(config, tokenId, gateWindow);
   }
 
   function attachSubmitHandler(config, form, submitButton) {
     var nativeSubmit = form.submit.bind(form);
+    var isHandling = false;
+
+    function handleSubmit() {
+      if (consumeSkipOnce(config)) return;
+      if (isHandling) return;
+      isHandling = true;
+
+      var rec = getStoredTokenRecord(config);
+      var tokenId = rec ? rec.tokenId : null;
+      var p = tokenId
+        ? handleVerifySubmit(config, form, submitButton, tokenId)
+        : handleFirstSubmit(config, form, submitButton);
+      if (p && typeof p.finally === "function") {
+        p.finally(function () {
+          isHandling = false;
+        });
+      } else {
+        isHandling = false;
+      }
+    }
 
     form.addEventListener(
       "submit",
       function (e) {
-        if (consumeSkipOnce(config)) {
-          return;
-        }
-
+        if (consumeSkipOnce(config)) return;
         e.preventDefault();
         e.stopPropagation();
-
-        var rec = getStoredTokenRecord(config);
-        var tokenId = rec ? rec.tokenId : null;
-
-        if (tokenId) {
-          handleVerifySubmit(config, form, submitButton, tokenId);
-        } else {
-          handleFirstSubmit(config, form, submitButton);
-        }
+        handleSubmit();
       },
       true
     );
@@ -605,26 +542,18 @@
         nativeSubmit();
         return;
       }
-      handleFirstSubmit(config, form, submitButton);
+      handleSubmit();
     };
   }
 
   function handleFirstSubmit(config, form, submitButton) {
-    setButtonLoading(submitButton, true);
-    hideMessage(form);
-
-    ensureTokenAndOpenGate(config, form, submitButton).catch(function (err) {
+    return ensureTokenAndOpenGate(config, form, submitButton).catch(function (err) {
       console.warn("[IntentGate] Failed:", err.message);
-      showMessage(form, "Unable to start the check. Please try again.", "error");
-      setButtonLoading(submitButton, false);
     });
   }
 
   function handleVerifySubmit(config, form, submitButton, tokenId) {
-    setButtonLoading(submitButton, true);
-    hideMessage(form);
-
-    verifyToken(tokenId, config)
+    return verifyToken(tokenId, config)
       .then(function (response) {
         if (response && response.ok === true && response.status === "PASSED") {
           setSkipOnce(config);
@@ -643,20 +572,14 @@
             clearTokenRecord(config);
             return issueToken(config).then(function (data) {
               storeTokenRecord(config, data.tokenId, data.expiresAt);
-              setButtonLoading(submitButton, false);
               return openGateAndHandshake(config, form, submitButton, data.tokenId);
             });
           }
-          setButtonLoading(submitButton, false);
-          openGateAndHandshake(config, form, submitButton, tokenId);
+          return openGateAndHandshake(config, form, submitButton, tokenId);
         }
       })
       .catch(function (err) {
         console.warn("[IntentGate] Verification failed:", err.message);
-        showMessage(form, "Please complete the check.", "error");
-      })
-      .finally(function () {
-        setButtonLoading(submitButton, false);
       });
   }
 
@@ -664,33 +587,40 @@
     var config = getConfig();
     if (!config) return;
 
-    precheck(config)
-      .then(function (allowed) {
-        if (!allowed) {
+    resolveGate(config)
+      .then(function (result) {
+        if (!result || result.found !== true || !result.gateId) {
           return;
         }
 
-        return waitForForm(config).then(function (form) {
+        var resolvedConfig = {
+          gateId: result.gateId,
+          formSelector: config.formSelector,
+          submitSelector: config.submitSelector,
+        };
+
+        return waitForForm(resolvedConfig).then(function (form) {
           if (!form) {
-            if (config.formSelector) {
-              console.warn("[IntentGate] Form not found for selector:", config.formSelector);
+            if (resolvedConfig.formSelector) {
+              console.warn("[IntentGate] Form not attached: selector not found:", resolvedConfig.formSelector);
             } else {
-              console.warn("[IntentGate] No suitable application form detected");
+              console.warn("[IntentGate] Form not attached: no suitable application form detected");
             }
             return;
           }
 
-          var submitButton = getSubmitButton(form, config);
+          var submitButton = getSubmitButton(form, resolvedConfig);
           if (!submitButton) {
             console.warn("[IntentGate] Submit button not found");
             return;
           }
 
-          attachSubmitHandler(config, form, submitButton);
+          attachSubmitHandler(resolvedConfig, form, submitButton);
+          console.log("[IntentGate] Form attached successfully");
         });
       })
       .catch(function (err) {
-        if (DEBUG) console.warn("[IntentGate] Precheck failed:", err.message);
+        console.warn("[IntentGate] Form not attached: resolve failed (" + (err && err.message ? err.message : "request error") + ")");
       });
   }
 
