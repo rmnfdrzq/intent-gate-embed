@@ -4,6 +4,13 @@
  * Auto gate resolution by page URL. No data-gate-id required.
  * Token persisted in localStorage. Gate opens in new tab; token via postMessage.
  *
+ * Developer notes:
+ * - pageUrl always uses window.location.href including query (full URL sent to API).
+ * - origin is optional; when sent we use window.location.origin as-is (no client-side normalization; server normalizes).
+ * - 400 "Invalid job page URL": we log a warning and fail open (no redirect, no blocked screen; intent check disabled on that page).
+ * - Redirect loop guard: we avoid opening the gate again for the same page URL within a short window (sessionStorage).
+ * - data-gate-id is not used (gate is resolved by siteKey + pageUrl). If data-return-url is ever used, default to window.location.href when missing.
+ *
  * @version 5.0.0
  */
 (function () {
@@ -19,8 +26,13 @@
   var SCORE_GAP_REQUIRED = __SCORE_GAP_REQUIRED__;
   var DEBUG = __DEBUG__;
 
+  var REDIRECT_GUARD_WINDOW_MS = 10000; // 10 seconds
+  var REDIRECT_GUARD_KEY = "intent_gate_last_open";
+
   var IG_READY = "IG_READY";
   var IG_INIT = "IG_INIT";
+
+  var INVALID_URL_LOG = "[ApplyIntent] Invalid job page URL. Intent check disabled on this page.";
 
   var scriptElement = document.currentScript;
 
@@ -29,12 +41,23 @@
     return;
   }
 
+  /** Full current page URL including query (and hash). Use this for all API pageUrl fields. */
+  function getPageUrl() {
+    return window.location.href;
+  }
+
   function tokenStorageKey(origin, gateId) {
     return "intent_gate_token:" + origin + ":" + gateId;
   }
 
   function skipOnceKey(gateId) {
     return "intent_gate_skip_once_" + gateId;
+  }
+
+  function isInvalidJobPageUrlError(err) {
+    if (!err || err.status !== 400) return false;
+    var msg = (err.message || "").toLowerCase();
+    return msg.indexOf("invalid") !== -1 && (msg.indexOf("job page") !== -1 || msg.indexOf("page url") !== -1);
   }
 
   function getConfig() {
@@ -69,13 +92,22 @@
               reject(new Error("Invalid JSON response"));
             }
           } else {
-            reject(new Error("Request failed: " + xhr.status));
+            var body = null;
+            try {
+              body = JSON.parse(xhr.responseText || "{}");
+            } catch (e) {}
+            var err = new Error(body && body.message ? body.message : "Request failed: " + xhr.status);
+            err.status = xhr.status;
+            err.body = body;
+            reject(err);
           }
         }
       };
 
       xhr.onerror = function () {
-        reject(new Error("Network error"));
+        var err = new Error("Network error");
+        err.status = 0;
+        reject(err);
       };
 
       xhr.send(data ? JSON.stringify(data) : undefined);
@@ -85,16 +117,19 @@
   function resolveGate(config) {
     return apiRequest("POST", "/v1/gates/resolve", {
       siteKey: config.siteKey,
-      pageUrl: window.location.href,
+      pageUrl: getPageUrl(),
     });
   }
 
   function issueToken(config) {
-    return apiRequest("POST", "/v1/token/issue", {
+    var payload = {
       gateId: config.gateId,
-      origin: window.location.origin,
-      pageUrl: window.location.href,
-    }).then(function (response) {
+      pageUrl: getPageUrl(),
+    };
+    if (window.location.origin) {
+      payload.origin = window.location.origin;
+    }
+    return apiRequest("POST", "/v1/token/issue", payload).then(function (response) {
       if (response && response.tokenId && response.expiresAt) {
         return { tokenId: response.tokenId, expiresAt: response.expiresAt };
       }
@@ -103,11 +138,14 @@
   }
 
   function verifyToken(tokenId, config) {
-    return apiRequest("POST", "/v1/token/verify", {
+    var payload = {
       tokenId: tokenId,
-      origin: window.location.origin,
-      pageUrl: window.location.href,
-    });
+      pageUrl: getPageUrl(),
+    };
+    if (window.location.origin) {
+      payload.origin = window.location.origin;
+    }
+    return apiRequest("POST", "/v1/token/verify", payload);
   }
 
   function getStoredTokenRecord(config) {
@@ -407,7 +445,38 @@
     });
   }
 
+  function getRedirectGuardData() {
+    try {
+      var raw = sessionStorage.getItem(REDIRECT_GUARD_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setRedirectGuard() {
+    try {
+      sessionStorage.setItem(
+        REDIRECT_GUARD_KEY,
+        JSON.stringify({ url: getPageUrl(), at: Date.now() })
+      );
+    } catch (e) {}
+  }
+
+  function shouldSkipOpenDueToGuard() {
+    var data = getRedirectGuardData();
+    if (!data || !data.url || data.at == null) return false;
+    if (data.url !== getPageUrl()) return false;
+    return Date.now() - data.at < REDIRECT_GUARD_WINDOW_MS;
+  }
+
   function openGateInNewTab(config) {
+    if (shouldSkipOpenDueToGuard()) {
+      console.warn("[IntentGate] Skipping gate open (recent open for this page); possible loop avoided.");
+      return null;
+    }
+    setRedirectGuard();
     var url = GATE_UI_BASE + "/g/" + encodeURIComponent(config.gateId);
     return window.open(url, "_blank");
   }
@@ -548,6 +617,10 @@
 
   function handleFirstSubmit(config, form, submitButton) {
     return ensureTokenAndOpenGate(config, form, submitButton).catch(function (err) {
+      if (isInvalidJobPageUrlError(err)) {
+        console.warn(INVALID_URL_LOG);
+        return;
+      }
       console.warn("[IntentGate] Failed:", err.message);
     });
   }
@@ -579,6 +652,10 @@
         }
       })
       .catch(function (err) {
+        if (isInvalidJobPageUrlError(err)) {
+          console.warn(INVALID_URL_LOG);
+          return;
+        }
         console.warn("[IntentGate] Verification failed:", err.message);
       });
   }
@@ -620,6 +697,10 @@
         });
       })
       .catch(function (err) {
+        if (isInvalidJobPageUrlError(err)) {
+          console.warn(INVALID_URL_LOG);
+          return;
+        }
         console.warn("[IntentGate] Form not attached: resolve failed (" + (err && err.message ? err.message : "request error") + ")");
       });
   }
