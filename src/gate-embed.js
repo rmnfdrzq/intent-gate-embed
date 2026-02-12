@@ -33,8 +33,17 @@
 
   var IG_READY = "IG_READY";
   var IG_INIT = "IG_INIT";
-
+  var APPLYINTENT_SUBMIT_DECISION = "APPLYINTENT_SUBMIT_DECISION";
+  var DECISION_CLOSE = "close";
+  var DECISION_SUBMIT_ANYWAY = "submit_anyway";
   var INVALID_URL_LOG = "[ApplyIntent] Invalid job page URL. Intent check disabled on this page.";
+
+  var pendingDecisionNonce = null;
+  var pendingDecision = false;
+  var allowOneSubmit = false;
+  var pendingForm = null;
+  var pendingConfig = null;
+  var decisionListenerAdded = false;
 
   var EMBED_SCRIPT_ID = "applyintent-embed-script";
 
@@ -76,6 +85,30 @@
 
   function skipOnceKey(gateId) {
     return "intent_gate_skip_once_" + gateId;
+  }
+
+  function firstSubmitDoneKey(origin, gateId) {
+    return "intent_gate_first_submit_done:" + origin + ":" + gateId;
+  }
+
+  function hasFirstSubmitBeenAllowed(config) {
+    try {
+      return sessionStorage.getItem(firstSubmitDoneKey(window.location.origin, config.gateId)) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function setFirstSubmitDone(config) {
+    try {
+      sessionStorage.setItem(firstSubmitDoneKey(window.location.origin, config.gateId), "1");
+    } catch (e) {}
+  }
+
+  function clearFirstSubmitDone(config) {
+    try {
+      sessionStorage.removeItem(firstSubmitDoneKey(window.location.origin, config.gateId));
+    } catch (e) {}
   }
 
   function isInvalidJobPageUrlError(err) {
@@ -505,6 +538,69 @@
     return window.open(url, "_blank");
   }
 
+  function generateNonce() {
+    var arr = new Uint8Array(16);
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      crypto.getRandomValues(arr);
+    } else {
+      for (var i = 0; i < 16; i++) arr[i] = Math.floor(Math.random() * 256);
+    }
+    var hex = "";
+    for (var j = 0; j < arr.length; j++) hex += ("0" + arr[j].toString(16)).slice(-2);
+    return hex;
+  }
+
+  function buildAlreadySubmittedUrl(config, nonce) {
+    var pageUrl = encodeURIComponent(getPageUrl());
+    var openerOrigin = encodeURIComponent(window.location.origin);
+    return (
+      GATE_UI_BASE +
+      "/embed/already-submitted?nonce=" +
+      encodeURIComponent(nonce) +
+      "&gateId=" +
+      encodeURIComponent(config.gateId) +
+      "&pageUrl=" +
+      pageUrl +
+      "&openerOrigin=" +
+      openerOrigin +
+      "&v=1"
+    );
+  }
+
+  function addDecisionMessageListener() {
+    if (decisionListenerAdded) return;
+    decisionListenerAdded = true;
+    window.addEventListener("message", function (ev) {
+      if (ev.origin !== GATE_UI_ORIGIN) return;
+      var data = ev.data;
+      if (!data || typeof data !== "object" || data.type !== APPLYINTENT_SUBMIT_DECISION) return;
+      if (data.nonce !== pendingDecisionNonce) return;
+      var decision = data.decision;
+      if (decision !== DECISION_CLOSE && decision !== DECISION_SUBMIT_ANYWAY) return;
+
+      pendingDecision = false;
+      pendingDecisionNonce = null;
+      var form = pendingForm;
+      var cfg = pendingConfig;
+      pendingForm = null;
+      pendingConfig = null;
+
+      if (DEBUG) console.log("[ApplyIntent] Decision received:", decision);
+
+      if (decision === DECISION_CLOSE) {
+        return;
+      }
+      if (decision === DECISION_SUBMIT_ANYWAY && form) {
+        allowOneSubmit = true;
+        if (form.requestSubmit) {
+          form.requestSubmit();
+        } else {
+          form.submit();
+        }
+      }
+    });
+  }
+
   function performHandshake(config, tokenId, gateWindow) {
     return new Promise(function (resolve, reject) {
       var resolved = false;
@@ -600,7 +696,13 @@
     var nativeSubmit = form.submit.bind(form);
     var isHandling = false;
 
+    addDecisionMessageListener();
+
     function handleSubmit() {
+      if (allowOneSubmit) {
+        allowOneSubmit = false;
+        return;
+      }
       if (consumeSkipOnce(config)) return;
       if (isHandling) return;
       isHandling = true;
@@ -622,6 +724,11 @@
     form.addEventListener(
       "submit",
       function (e) {
+        if (allowOneSubmit) {
+          allowOneSubmit = false;
+          setFirstSubmitDone(config);
+          return;
+        }
         if (consumeSkipOnce(config)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -631,6 +738,12 @@
     );
 
     form.submit = function () {
+      if (allowOneSubmit) {
+        allowOneSubmit = false;
+        setFirstSubmitDone(config);
+        nativeSubmit();
+        return;
+      }
       if (consumeSkipOnce(config)) {
         nativeSubmit();
         return;
@@ -653,27 +766,63 @@
     return verifyToken(tokenId, config)
       .then(function (response) {
         if (response && response.ok === true && response.status === "PASSED") {
-          setSkipOnce(config);
-          if (form.requestSubmit) {
-            form.requestSubmit();
-          } else {
-            var ev = new Event("submit", { bubbles: true, cancelable: true });
-            form.dispatchEvent(ev);
-            if (!ev.defaultPrevented) {
-              form.submit();
+          if (!hasFirstSubmitBeenAllowed(config)) {
+            if (form.requestSubmit) {
+              allowOneSubmit = true;
+              form.requestSubmit();
+            } else {
+              setFirstSubmitDone(config);
+              try {
+                HTMLFormElement.prototype.submit.call(form);
+              } catch (e) {
+                form.submit();
+              }
+            }
+            return;
+          }
+          if (pendingDecision) {
+            if (DEBUG) console.log("[ApplyIntent] Already showing warning; submission blocked.");
+            return;
+          }
+          var nonce = generateNonce();
+          pendingDecisionNonce = nonce;
+          pendingDecision = true;
+          pendingForm = form;
+          pendingConfig = config;
+          var url = buildAlreadySubmittedUrl(config, nonce);
+          if (DEBUG) console.log("[ApplyIntent] Opening already-submitted warning.");
+          var win = window.open(url, "_blank");
+          if (!win) {
+            console.warn("[ApplyIntent] Popup blocked; allowing submission.");
+            pendingDecision = false;
+            pendingDecisionNonce = null;
+            pendingForm = null;
+            pendingConfig = null;
+            if (form.requestSubmit) {
+              allowOneSubmit = true;
+              form.requestSubmit();
+            } else {
+              try {
+                HTMLFormElement.prototype.submit.call(form);
+              } catch (e) {
+                allowOneSubmit = true;
+                form.submit();
+              }
             }
           }
-        } else {
-          var status = response && response.status;
-          if (status === "EXPIRED") {
-            clearTokenRecord(config);
-            return issueToken(config).then(function (data) {
-              storeTokenRecord(config, data.tokenId, data.expiresAt);
-              return openGateAndHandshake(config, form, submitButton, data.tokenId);
-            });
-          }
-          return openGateAndHandshake(config, form, submitButton, tokenId);
+          return;
         }
+        var status = response && response.status;
+        if (status === "EXPIRED") {
+          clearTokenRecord(config);
+          clearFirstSubmitDone(config);
+          return issueToken(config).then(function (data) {
+            storeTokenRecord(config, data.tokenId, data.expiresAt);
+            return openGateAndHandshake(config, form, submitButton, data.tokenId);
+          });
+        }
+        clearFirstSubmitDone(config);
+        return openGateAndHandshake(config, form, submitButton, tokenId);
       })
       .catch(function (err) {
         if (isInvalidJobPageUrlError(err)) {
