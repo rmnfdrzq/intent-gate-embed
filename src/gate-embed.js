@@ -29,7 +29,6 @@
   var REDIRECT_GUARD_WINDOW_MS = 10000; // 10 seconds
   var REDIRECT_GUARD_KEY = "intent_gate_last_open";
   var URL_CHANGE_DEBOUNCE_MS = 150;
-  var URL_CHANGE_POLL_MS = 400;
   var INIT_AFTER_NAV_DELAY_MS = 250;
 
   var IG_READY = "IG_READY";
@@ -40,7 +39,6 @@
   var scriptElement = document.currentScript;
   var lastSeenPath = "";
   var urlChangeDebounceTimer = null;
-  var urlChangePollTimer = null;
 
   if (!scriptElement) {
     console.warn("[IntentGate] Script element not found. Embed disabled.");
@@ -746,27 +744,7 @@
   }
 
   /**
-   * Poll URL so we detect SPA navigation even when history.pushState isn't the one we patched
-   * (e.g. router keeps its own reference). Runs until script is replaced; interval is light.
-   */
-  function startUrlChangePoll() {
-    if (urlChangePollTimer) return;
-    function poll() {
-      var path = getPagePath();
-      if (path !== lastSeenPath) {
-        lastSeenPath = path;
-        setTimeout(function () {
-          if (getPagePath() !== path) return;
-          init();
-        }, INIT_AFTER_NAV_DELAY_MS);
-      }
-      urlChangePollTimer = setTimeout(poll, URL_CHANGE_POLL_MS);
-    }
-    urlChangePollTimer = setTimeout(poll, URL_CHANGE_POLL_MS);
-  }
-
-  /**
-   * Listen for SPA navigation: history API, hashchange, and polling fallback.
+   * Listen for SPA navigation: history API and hashchange.
    */
   function setupUrlChangeListener() {
     lastSeenPath = getPagePath();
@@ -788,7 +766,6 @@
     } catch (e) {
       /* ignore */
     }
-    startUrlChangePoll();
   }
 
   function runEmbed() {
