@@ -44,12 +44,17 @@ The Intent Gate embed script requires candidates to complete a short Intent Gate
 
 ## Candidate flow
 
-1. Candidate loads job page
-2. Script resolves gate by page URL (if no gate → script does nothing)
-3. Script discovers form (auto or manual selector)
-4. **First Submit click:** Script issues token, opens gate in new tab, candidate completes gate
-5. Candidate returns to form, clicks Submit again
-6. **Second Submit click:** Script verifies token; if PASSED → form submits; otherwise → gate re-opens
+1. Candidate loads the site (any page) or navigates within an SPA.
+2. **On each URL change** (including first load), the script:
+   - Resolves the gate by current page URL (if no gate for this page → script does nothing).
+   - Looks for an application form (auto-detect or manual selector).
+   - **Only if** the page is a configured job page **and** a form is found, the script attaches; otherwise it does nothing for that page.
+3. On the job page, when the candidate clicks Submit:
+   - **First Submit click:** Script issues token, opens gate in new tab, candidate completes gate.
+   - Candidate returns to form, clicks Submit again.
+   - **Second Submit click:** Script verifies token; if PASSED → form submits; otherwise → gate re-opens.
+
+On **SPA sites**, the script does not run only on the first page load: it listens for URL changes (History API: pushState, replaceState, popstate). When the user navigates (e.g. from homepage to a job page), the script re-runs for the new URL and attaches to the form only on the job page where a gate is configured and a form is present.
 
 ---
 
@@ -59,7 +64,7 @@ The Intent Gate embed script requires candidates to complete a short Intent Gate
 |-----------|---------------|-------|
 | **Static HTML** | ✅ Full | Standard forms |
 | **WordPress** | ✅ Full | Add via theme or plugin |
-| **SPA (React, Vue, Angular)** | ✅ Full | MutationObserver waits up to 8s for late-mounted forms |
+| **SPA (React, Vue, Angular)** | ✅ Full | Script re-runs on every URL change; attaches only on job pages with a form. MutationObserver waits up to 8s for late-mounted forms |
 | **SSR (Next.js, Nuxt)** | ✅ Full | Form exists after hydration |
 | **Shadow DOM** | ⚠️ Partial | Use `data-form-selector` if auto-detect fails |
 | **Form in iframe** | ⚠️ Partial | Script must run in same context as form |
@@ -79,7 +84,7 @@ The Intent Gate embed script requires candidates to complete a short Intent Gate
 
 | Issue | Solution |
 |-------|----------|
-| Embed does not activate | Ensure `data-site-key` is workspace ID; gate must have jobPageUrl for current page |
+| Embed does not activate | Ensure `data-site-key` is workspace ID; gate must have jobPageUrl for current page. On SPA, ensure navigation uses History API (pushState/replaceState) or back/forward so URL changes are detected |
 | Form not detected | Add `data-form-selector` and `data-submit-selector` |
 | Multiple forms on page | Use `data-form-selector` to target the application form |
 | Form mounts late (SPA) | Script waits up to 8 seconds; if longer, use `data-form-selector` |

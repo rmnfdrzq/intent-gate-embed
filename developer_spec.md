@@ -41,7 +41,16 @@ Optional attributes:
 
 ## Lifecycle
 
-### Page load
+### Page load and URL changes (SPA)
+- On first load: set up URL change listener (History API: pushState, replaceState, popstate).
+- On each URL change (including initial load), run the flow for the **current** URL:
+  - Resolve gate by page URL (POST /v1/gates/resolve).
+  - If no gate for this page → do nothing.
+  - Wait for form (selector or auto-detect); if no form found → do nothing.
+  - Only then attach submit handler. If URL changes before attach completes, abort and do not attach.
+- Thus on SPA, navigating from e.g. homepage to job page triggers a new run; the script attaches only on the job page when gate and form are present.
+
+### Page load (single run)
 - Read and validate attributes
 - Locate form and submit button
 - Call POST /v1/token/issue

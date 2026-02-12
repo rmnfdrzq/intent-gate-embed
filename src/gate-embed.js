@@ -28,6 +28,7 @@
 
   var REDIRECT_GUARD_WINDOW_MS = 10000; // 10 seconds
   var REDIRECT_GUARD_KEY = "intent_gate_last_open";
+  var URL_CHANGE_DEBOUNCE_MS = 150;
 
   var IG_READY = "IG_READY";
   var IG_INIT = "IG_INIT";
@@ -35,6 +36,8 @@
   var INVALID_URL_LOG = "[ApplyIntent] Invalid job page URL. Intent check disabled on this page.";
 
   var scriptElement = document.currentScript;
+  var lastSeenUrl = "";
+  var urlChangeDebounceTimer = null;
 
   if (!scriptElement) {
     console.warn("[IntentGate] Script element not found. Embed disabled.");
@@ -660,12 +663,19 @@
       });
   }
 
+  /**
+   * Run init for the current page: resolve gate by URL, find form, attach only if still on same URL.
+   * Used on first load and on every SPA URL change.
+   */
   function init() {
     var config = getConfig();
     if (!config) return;
 
+    var runUrl = getPageUrl();
+
     resolveGate(config)
       .then(function (result) {
+        if (getPageUrl() !== runUrl) return;
         if (!result || result.found !== true || !result.gateId) {
           return;
         }
@@ -677,6 +687,7 @@
         };
 
         return waitForForm(resolvedConfig).then(function (form) {
+          if (getPageUrl() !== runUrl) return;
           if (!form) {
             if (resolvedConfig.formSelector) {
               console.warn("[IntentGate] Form not attached: selector not found:", resolvedConfig.formSelector);
@@ -697,6 +708,7 @@
         });
       })
       .catch(function (err) {
+        if (getPageUrl() !== runUrl) return;
         if (isInvalidJobPageUrlError(err)) {
           console.warn(INVALID_URL_LOG);
           return;
@@ -705,9 +717,49 @@
       });
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
+  function onUrlChange() {
+    var url = getPageUrl();
+    if (url === lastSeenUrl) return;
+    lastSeenUrl = url;
     init();
+  }
+
+  function scheduleUrlChange() {
+    if (urlChangeDebounceTimer) clearTimeout(urlChangeDebounceTimer);
+    urlChangeDebounceTimer = setTimeout(function () {
+      urlChangeDebounceTimer = null;
+      onUrlChange();
+    }, URL_CHANGE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Listen for SPA navigation: history.pushState, replaceState, and popstate.
+   * On each URL change we re-run init: resolve gate for new URL, find form, attach only if it's a job page with a form.
+   */
+  function setupUrlChangeListener() {
+    lastSeenUrl = getPageUrl();
+
+    var pushState = history.pushState;
+    var replaceState = history.replaceState;
+    history.pushState = function () {
+      pushState.apply(this, arguments);
+      scheduleUrlChange();
+    };
+    history.replaceState = function () {
+      replaceState.apply(this, arguments);
+      scheduleUrlChange();
+    };
+    window.addEventListener("popstate", scheduleUrlChange);
+  }
+
+  function runEmbed() {
+    setupUrlChangeListener();
+    init();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", runEmbed);
+  } else {
+    runEmbed();
   }
 })();

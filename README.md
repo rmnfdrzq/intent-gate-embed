@@ -10,10 +10,13 @@ It does **not** render UI for questions, does **not** evaluate candidates, and d
 
 ## What the embed script does
 
-1. **Resolves gate** — Sends current page URL to backend; receives gateId if a gate is configured for this page
-2. **Discovers form** — Auto-detects application form or uses manual selectors
-3. **Issues token** — On first Submit click, issues token and opens gate UI in new tab
-4. **Verifies token** — On second Submit click (after candidate completes gate), verifies token and allows or blocks form submission
+1. **Listens for page (URL) changes** — On first load and on every SPA navigation (History API: pushState, replaceState, popstate), the script re-runs for the current URL
+2. **Resolves gate** — Sends current page URL to backend; receives gateId only if a gate is configured for this exact page
+3. **Discovers form** — Auto-detects application form or uses manual selectors; only continues if a form is found (so non–job pages are ignored)
+4. **Issues token** — On first Submit click, issues token and opens gate UI in new tab
+5. **Verifies token** — On second Submit click (after candidate completes gate), verifies token and allows or blocks form submission
+
+On **SPA sites**, when the user navigates from e.g. the homepage to a job page, the script does not run only on the first load: it runs again on each URL change, resolves the gate for the new page, and attaches to the form only when the current page is a configured job page and a suitable form is found.
 
 ---
 
@@ -57,7 +60,7 @@ Companies add a single script tag to their site (can be site-wide; script only a
 |-----------|---------------|-------|
 | **Static HTML** | ✅ Full | Standard forms, straightforward |
 | **WordPress** | ✅ Full | Add script via theme (header/footer) or plugin |
-| **SPA (React, Vue, Angular)** | ✅ Full | MutationObserver waits up to 8s for forms that mount late |
+| **SPA (React, Vue, Angular)** | ✅ Full | Re-runs on every URL change (pushState/replaceState/popstate); MutationObserver waits up to 8s for forms that mount late |
 | **SSR (Next.js, Nuxt)** | ✅ Full | Form exists after hydration |
 | **Shadow DOM** | ⚠️ Partial | Auto-detect may fail; use `data-form-selector` |
 | **Form in iframe** | ⚠️ Partial | Script must run in same context as form |
