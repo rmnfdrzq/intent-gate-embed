@@ -806,11 +806,6 @@
         console.warn(INVALID_URL_LOG);
         return;
       }
-      if (err && err.status === 409 && err.body && err.body.code === "GATE_INACTIVE") {
-        openPausedPage();
-        // Fail-closed: do NOT allow this submit to proceed.
-        return;
-      }
       if (isGateNotFoundError(err)) {
         openUnavailablePage();
         // Fail open: allow this submit to proceed
@@ -884,11 +879,6 @@
           return;
         }
         var status = response && response.status;
-        if (status === "inactive") {
-          openPausedPage();
-          // Fail-closed: block submission when gate is paused.
-          return;
-        }
         if (status === "EXPIRED") {
           clearTokenRecord(config);
           clearFirstSubmitDone(config);
@@ -903,11 +893,6 @@
       .catch(function (err) {
         if (isInvalidJobPageUrlError(err)) {
           console.warn(INVALID_URL_LOG);
-          return;
-        }
-        if (err && err.status === 409 && err.body && err.body.code === "GATE_INACTIVE") {
-          openPausedPage();
-          // Fail-closed: block submission when gate is paused.
           return;
         }
         if (isGateNotFoundError(err)) {
@@ -961,26 +946,7 @@
         .then(function (result) {
           if (getPagePath() !== runPath) return;
 
-          if (!result) return;
-
-          if (result.found === false && result.reason === "inactive") {
-            // Gate exists but is inactive – show paused page and block submissions.
-            openPausedPage();
-            if (form) {
-              form.addEventListener(
-                "submit",
-                function (e) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  openPausedPage();
-                },
-                true
-              );
-            }
-            return;
-          }
-
-          if (result.found !== true || !result.gateId) {
+          if (!result || result.found !== true || !result.gateId) {
             return;
           }
 
