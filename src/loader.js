@@ -46,10 +46,7 @@
   }
 
   var manifestUrl = baseOrigin + "/manifest.json?ts=" + Date.now();
-  fetch(manifestUrl, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" },
-  })
+  fetch(manifestUrl, { cache: "no-store" })
     .then(function (res) {
       if (!res.ok) throw new Error("manifest " + res.status);
       return res.json();
