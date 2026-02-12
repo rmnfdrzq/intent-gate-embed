@@ -29,6 +29,8 @@
   var REDIRECT_GUARD_WINDOW_MS = 10000; // 10 seconds
   var REDIRECT_GUARD_KEY = "intent_gate_last_open";
   var URL_CHANGE_DEBOUNCE_MS = 150;
+  var URL_CHANGE_POLL_MS = 400;
+  var INIT_AFTER_NAV_DELAY_MS = 250;
 
   var IG_READY = "IG_READY";
   var IG_INIT = "IG_INIT";
@@ -36,9 +38,9 @@
   var INVALID_URL_LOG = "[ApplyIntent] Invalid job page URL. Intent check disabled on this page.";
 
   var scriptElement = document.currentScript;
-  /** For "same page" check: pathname + search (no hash) so hash-only changes don't abort init. */
   var lastSeenPath = "";
   var urlChangeDebounceTimer = null;
+  var urlChangePollTimer = null;
 
   if (!scriptElement) {
     console.warn("[IntentGate] Script element not found. Embed disabled.");
@@ -50,9 +52,10 @@
     return window.location.href;
   }
 
-  /** Path + search only (no hash). Used to detect "same page" so we don't abort init on hash change. */
+  /** Path + search + hash. Used to detect "same page" and to support hash-based SPA routing. */
   function getPagePath() {
-    return window.location.pathname + window.location.search;
+    var loc = window.location;
+    return loc.pathname + loc.search + (loc.hash || "");
   }
 
   function tokenStorageKey(origin, gateId) {
@@ -727,7 +730,11 @@
     var path = getPagePath();
     if (path === lastSeenPath) return;
     lastSeenPath = path;
-    init();
+    // Delay init so SPA has time to replace DOM with the new page before we look for the form
+    setTimeout(function () {
+      if (getPagePath() !== path) return;
+      init();
+    }, INIT_AFTER_NAV_DELAY_MS);
   }
 
   function scheduleUrlChange() {
@@ -739,8 +746,27 @@
   }
 
   /**
-   * Listen for SPA navigation: history.pushState, replaceState, and popstate.
-   * On each URL change we re-run init. If patching fails (e.g. strict env), we still run init once.
+   * Poll URL so we detect SPA navigation even when history.pushState isn't the one we patched
+   * (e.g. router keeps its own reference). Runs until script is replaced; interval is light.
+   */
+  function startUrlChangePoll() {
+    if (urlChangePollTimer) return;
+    function poll() {
+      var path = getPagePath();
+      if (path !== lastSeenPath) {
+        lastSeenPath = path;
+        setTimeout(function () {
+          if (getPagePath() !== path) return;
+          init();
+        }, INIT_AFTER_NAV_DELAY_MS);
+      }
+      urlChangePollTimer = setTimeout(poll, URL_CHANGE_POLL_MS);
+    }
+    urlChangePollTimer = setTimeout(poll, URL_CHANGE_POLL_MS);
+  }
+
+  /**
+   * Listen for SPA navigation: history API, hashchange, and polling fallback.
    */
   function setupUrlChangeListener() {
     lastSeenPath = getPagePath();
@@ -758,9 +784,11 @@
         };
       }
       window.addEventListener("popstate", scheduleUrlChange);
+      window.addEventListener("hashchange", scheduleUrlChange);
     } catch (e) {
-      /* ignore: no SPA URL change detection, init still runs */
+      /* ignore */
     }
+    startUrlChangePoll();
   }
 
   function runEmbed() {
