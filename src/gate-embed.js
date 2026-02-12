@@ -36,7 +36,21 @@
 
   var INVALID_URL_LOG = "[ApplyIntent] Invalid job page URL. Intent check disabled on this page.";
 
-  var scriptElement = document.currentScript;
+  var EMBED_SCRIPT_ID = "applyintent-embed-script";
+
+  function getScriptElement() {
+    if (document.currentScript) return document.currentScript;
+    var byId = document.getElementById(EMBED_SCRIPT_ID);
+    if (byId) return byId;
+    var scripts = document.getElementsByTagName("script");
+    for (var i = 0; i < scripts.length; i++) {
+      var s = scripts[i];
+      if (s.getAttribute("data-site-key") && (s.src || "").indexOf("embed.") !== -1) return s;
+    }
+    return null;
+  }
+
+  var scriptElement = getScriptElement();
   var lastSeenPath = "";
   var urlChangeDebounceTimer = null;
 

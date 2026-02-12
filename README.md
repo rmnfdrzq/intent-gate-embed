@@ -22,16 +22,29 @@ On **SPA sites**, when the user navigates from e.g. the homepage to a job page, 
 
 ## How it is used
 
-Companies add a single script tag to their site (can be site-wide; script only activates on configured job pages):
+Companies add a single script tag to their site (can be site-wide; script only activates on configured job pages).
+
+**Production:**
 
 ```html
 <script
-  src="https://cdn.intent-gate.com/gate-embed.min.js"
+  src="https://embed.applyintent.com/loader.js"
   data-site-key="workspace-id"
   data-form-selector="#apply-form"
   data-submit-selector="button[type=submit]"
 ></script>
 ```
+
+**Local testing (after `npm run build` and serving `dist` on port 8080):**
+
+```html
+<script
+  src="http://localhost:8080/loader.js"
+  data-site-key="your-workspace-id"
+></script>
+```
+
+The loader always fetches the latest versioned embed from `manifest.json`, so sites get updates without cache issues. The versioned embed file is immutable and cached long-term.
 
 ### Attributes
 
@@ -94,13 +107,29 @@ When `data-form-selector` is not provided, the script auto-detects the applicati
 
 ## Build and configuration
 
-The script is built with esbuild. Configuration is injected at build time from `.env`:
+The project is built with Vite. Configuration is injected at build time from `.env`:
 
 ```bash
 cp .env.example .env
 # Edit .env with your API and Gate UI URLs
 npm run build
 ```
+
+This produces:
+
+- `dist/loader.js` — stable URL; never cached; fetches `manifest.json` and injects the versioned embed.
+- `dist/embed.[hash].js` — content-hashed embed script (immutable, long-term cache).
+- `dist/manifest.json` — maps to the current embed file (no cache at edge/browser).
+
+**Local development on http://localhost:8080:**
+
+```bash
+npm run build
+npm run preview
+# or: npm run dev:static  (build + serve dist on 8080)
+```
+
+Then use `http://localhost:8080/loader.js` in your test page snippet.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -113,6 +142,17 @@ npm run build
 | `SCORE_THRESHOLD` | `5` | Min form score for auto-detection |
 | `SCORE_GAP_REQUIRED` | `2` | Min score gap between top forms |
 | `DEBUG` | `false` | Enable form scoring logs |
+
+---
+
+## Verification (Cloudflare Pages)
+
+After deploying to Cloudflare Pages:
+
+1. Open DevTools → Network; hard refresh. Confirm `loader.js` and `manifest.json` responses have `Cache-Control: no-store` / `no-cache` and are fetched on every load.
+2. Confirm the embed file (e.g. `embed.[hash].js`) is cached with `max-age=31536000, immutable` and its filename changes after a new deploy.
+3. Change embed code, deploy, then refresh the job page without clearing cache; the page should load the new embed (loader fetches the new manifest).
+4. Confirm behavior: `data-site-key` is applied, gate resolves, form attaches.
 
 ---
 

@@ -2,26 +2,21 @@
   "name": "intent-gate-embed",
   "version": "1.0.0",
   "description": "Intent Gate embed script for job application forms",
-  "main": "dist/gate-embed.min.js",
+  "main": "dist/loader.js",
   "scripts": {
-    "build": "node build.js",
-    "build:watch": "node build.js --watch",
-    "serve": "node build.js && npx serve dist -p 8080"
+    "build": "vite build -c vite.embed.config.js && vite build -c vite.loader.config.js && node scripts/generate-manifest.mjs && node scripts/copy-headers.mjs",
+    "preview": "vite preview --port 8080 --strictPort",
+    "dev:static": "npm run build && npx serve dist -l 8080"
   },
-  "keywords": [
-    "intent-gate",
-    "embed",
-    "form",
-    "gatekeeper"
-  ],
+  "keywords": ["intent-gate", "embed", "form", "gatekeeper"],
   "author": "Intent Gate",
   "license": "UNLICENSED",
   "private": true,
   "devDependencies": {
     "dotenv": "^16.0.0",
-    "esbuild": "^0.20.0"
+    "vite": "^5.4.0"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   }
 }

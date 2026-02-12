@@ -24,7 +24,7 @@ The Intent Gate embed script requires candidates to complete a short Intent Gate
 
 ```html
 <script
-  src="https://cdn.intent-gate.com/gate-embed.min.js"
+  src="https://embed.applyintent.com/loader.js"
   data-site-key="your-workspace-id"
 ></script>
 ```
@@ -33,7 +33,7 @@ The Intent Gate embed script requires candidates to complete a short Intent Gate
 
 ```html
 <script
-  src="https://cdn.intent-gate.com/gate-embed.min.js"
+  src="https://embed.applyintent.com/loader.js"
   data-site-key="your-workspace-id"
   data-form-selector="#applyForm"
   data-submit-selector="#submitButton"

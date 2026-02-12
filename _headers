@@ -1,0 +1,18 @@
+# Intent Gate Embed - Cloudflare Pages cache rules
+# loader and manifest must revalidate every time; versioned embed is immutable
+
+/loader.js
+  Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+  Pragma: no-cache
+  Expires: 0
+
+/manifest.json
+  Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+  Pragma: no-cache
+  Expires: 0
+
+/embed.*.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/embed.*.js
+  Cache-Control: public, max-age=31536000, immutable
