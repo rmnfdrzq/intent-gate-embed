@@ -36,7 +36,8 @@
   var INVALID_URL_LOG = "[ApplyIntent] Invalid job page URL. Intent check disabled on this page.";
 
   var scriptElement = document.currentScript;
-  var lastSeenUrl = "";
+  /** For "same page" check: pathname + search (no hash) so hash-only changes don't abort init. */
+  var lastSeenPath = "";
   var urlChangeDebounceTimer = null;
 
   if (!scriptElement) {
@@ -47,6 +48,11 @@
   /** Full current page URL including query (and hash). Use this for all API pageUrl fields. */
   function getPageUrl() {
     return window.location.href;
+  }
+
+  /** Path + search only (no hash). Used to detect "same page" so we don't abort init on hash change. */
+  function getPagePath() {
+    return window.location.pathname + window.location.search;
   }
 
   function tokenStorageKey(origin, gateId) {
@@ -664,18 +670,18 @@
   }
 
   /**
-   * Run init for the current page: resolve gate by URL, find form, attach only if still on same URL.
-   * Used on first load and on every SPA URL change.
+   * Run init for the current page: resolve gate by URL, find form, attach only if still on same page.
+   * "Same page" = same pathname+search (hash changes do not abort).
    */
   function init() {
     var config = getConfig();
     if (!config) return;
 
-    var runUrl = getPageUrl();
+    var runPath = getPagePath();
 
     resolveGate(config)
       .then(function (result) {
-        if (getPageUrl() !== runUrl) return;
+        if (getPagePath() !== runPath) return;
         if (!result || result.found !== true || !result.gateId) {
           return;
         }
@@ -687,7 +693,7 @@
         };
 
         return waitForForm(resolvedConfig).then(function (form) {
-          if (getPageUrl() !== runUrl) return;
+          if (getPagePath() !== runPath) return;
           if (!form) {
             if (resolvedConfig.formSelector) {
               console.warn("[IntentGate] Form not attached: selector not found:", resolvedConfig.formSelector);
@@ -708,7 +714,7 @@
         });
       })
       .catch(function (err) {
-        if (getPageUrl() !== runUrl) return;
+        if (getPagePath() !== runPath) return;
         if (isInvalidJobPageUrlError(err)) {
           console.warn(INVALID_URL_LOG);
           return;
@@ -718,9 +724,9 @@
   }
 
   function onUrlChange() {
-    var url = getPageUrl();
-    if (url === lastSeenUrl) return;
-    lastSeenUrl = url;
+    var path = getPagePath();
+    if (path === lastSeenPath) return;
+    lastSeenPath = path;
     init();
   }
 
@@ -734,22 +740,27 @@
 
   /**
    * Listen for SPA navigation: history.pushState, replaceState, and popstate.
-   * On each URL change we re-run init: resolve gate for new URL, find form, attach only if it's a job page with a form.
+   * On each URL change we re-run init. If patching fails (e.g. strict env), we still run init once.
    */
   function setupUrlChangeListener() {
-    lastSeenUrl = getPageUrl();
-
-    var pushState = history.pushState;
-    var replaceState = history.replaceState;
-    history.pushState = function () {
-      pushState.apply(this, arguments);
-      scheduleUrlChange();
-    };
-    history.replaceState = function () {
-      replaceState.apply(this, arguments);
-      scheduleUrlChange();
-    };
-    window.addEventListener("popstate", scheduleUrlChange);
+    lastSeenPath = getPagePath();
+    try {
+      var pushState = history.pushState;
+      var replaceState = history.replaceState;
+      if (typeof pushState === "function" && typeof replaceState === "function") {
+        history.pushState = function () {
+          pushState.apply(this, arguments);
+          scheduleUrlChange();
+        };
+        history.replaceState = function () {
+          replaceState.apply(this, arguments);
+          scheduleUrlChange();
+        };
+      }
+      window.addEventListener("popstate", scheduleUrlChange);
+    } catch (e) {
+      /* ignore: no SPA URL change detection, init still runs */
+    }
   }
 
   function runEmbed() {
