@@ -34,6 +34,7 @@
   var IG_READY = "IG_READY";
   var IG_INIT = "IG_INIT";
   var APPLYINTENT_SUBMIT_DECISION = "APPLYINTENT_SUBMIT_DECISION";
+  var APPLYINTENT_GATE_PASSED = "APPLYINTENT_GATE_PASSED";
   var DECISION_CLOSE = "close";
   var DECISION_SUBMIT_ANYWAY = "submit_anyway";
   var INVALID_URL_LOG = "[ApplyIntent] Invalid job page URL. Intent check disabled on this page.";
@@ -44,6 +45,8 @@
   var pendingForm = null;
   var pendingConfig = null;
   var decisionListenerAdded = false;
+  var attachedFormRef = null;
+  var attachedConfigRef = null;
 
   var EMBED_SCRIPT_ID = "applyintent-embed-script";
 
@@ -573,7 +576,28 @@
     window.addEventListener("message", function (ev) {
       if (ev.origin !== GATE_UI_ORIGIN) return;
       var data = ev.data;
-      if (!data || typeof data !== "object" || data.type !== APPLYINTENT_SUBMIT_DECISION) return;
+      if (!data || typeof data !== "object") return;
+
+      if (data.type === APPLYINTENT_GATE_PASSED) {
+        var cfg = attachedConfigRef;
+        var form = attachedFormRef;
+        if (form && cfg && data.gateId === cfg.gateId) {
+          allowOneSubmit = true;
+          setFirstSubmitDone(cfg);
+          if (form.requestSubmit) {
+            form.requestSubmit();
+          } else {
+            try {
+              HTMLFormElement.prototype.submit.call(form);
+            } catch (e) {
+              form.submit();
+            }
+          }
+        }
+        return;
+      }
+
+      if (data.type !== APPLYINTENT_SUBMIT_DECISION) return;
       if (data.nonce !== pendingDecisionNonce) return;
       var decision = data.decision;
       if (decision !== DECISION_CLOSE && decision !== DECISION_SUBMIT_ANYWAY) return;
@@ -696,6 +720,8 @@
     var nativeSubmit = form.submit.bind(form);
     var isHandling = false;
 
+    attachedFormRef = form;
+    attachedConfigRef = config;
     addDecisionMessageListener();
 
     function handleSubmit() {
