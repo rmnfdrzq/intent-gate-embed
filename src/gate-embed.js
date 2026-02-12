@@ -120,6 +120,10 @@
     return msg.indexOf("invalid") !== -1 && (msg.indexOf("job page") !== -1 || msg.indexOf("page url") !== -1);
   }
 
+  function isGateNotFoundError(err) {
+    return !!err && err.status === 404;
+  }
+
   function getConfig() {
     var siteKey = scriptElement.getAttribute("data-site-key");
     var formSelector = scriptElement.getAttribute("data-form-selector");
@@ -541,6 +545,15 @@
     return window.open(url, "_blank");
   }
 
+  function openUnavailablePage() {
+    try {
+      var url = GATE_UI_BASE + "/unavailable";
+      return window.open(url, "_blank");
+    } catch (e) {
+      return null;
+    }
+  }
+
   function generateNonce() {
     var arr = new Uint8Array(16);
     if (typeof crypto !== "undefined" && crypto.getRandomValues) {
@@ -784,6 +797,24 @@
         console.warn(INVALID_URL_LOG);
         return;
       }
+      if (isGateNotFoundError(err)) {
+        openUnavailablePage();
+        // Fail open: allow this submit to proceed
+        if (form) {
+          if (form.requestSubmit) {
+            allowOneSubmit = true;
+            form.requestSubmit();
+          } else {
+            try {
+              HTMLFormElement.prototype.submit.call(form);
+            } catch (e) {
+              allowOneSubmit = true;
+              form.submit();
+            }
+          }
+        }
+        return;
+      }
       console.warn("[ApplyIntent] Failed:", err.message);
     });
   }
@@ -853,6 +884,24 @@
       .catch(function (err) {
         if (isInvalidJobPageUrlError(err)) {
           console.warn(INVALID_URL_LOG);
+          return;
+        }
+        if (isGateNotFoundError(err)) {
+          openUnavailablePage();
+          // Fail open: allow this submit to proceed
+          if (form) {
+            if (form.requestSubmit) {
+              allowOneSubmit = true;
+              form.requestSubmit();
+            } else {
+              try {
+                HTMLFormElement.prototype.submit.call(form);
+              } catch (e) {
+                allowOneSubmit = true;
+                form.submit();
+              }
+            }
+          }
           return;
         }
         console.warn("[ApplyIntent] Verification failed:", err.message);
