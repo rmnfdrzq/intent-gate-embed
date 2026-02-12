@@ -67,7 +67,7 @@
   var urlChangeDebounceTimer = null;
 
   if (!scriptElement) {
-    console.warn("[IntentGate] Script element not found. Embed disabled.");
+    console.warn("[ApplyIntent] Script element not found. Embed disabled.");
     return;
   }
 
@@ -126,7 +126,7 @@
     var submitSelector = scriptElement.getAttribute("data-submit-selector");
 
     if (!siteKey) {
-      console.warn("[IntentGate] Missing required attribute: data-site-key");
+      console.warn("[ApplyIntent] Missing required attribute: data-site-key");
       return null;
     }
 
@@ -226,7 +226,7 @@
       var key = tokenStorageKey(window.location.origin, config.gateId);
       localStorage.setItem(key, JSON.stringify({ tokenId: tokenId, expiresAt: expiresAt }));
     } catch (e) {
-      console.warn("[IntentGate] Unable to store token");
+      console.warn("[ApplyIntent] Unable to store token");
     }
   }
 
@@ -432,7 +432,7 @@
 
     if (DEBUG) {
       for (var s = 0; s < scored.length; s++) {
-        console.log("[IntentGate] Form score:", scored[s].score, scored[s].signals);
+        console.log("[ApplyIntent] Form score:", scored[s].score, scored[s].signals);
       }
     }
 
@@ -441,17 +441,17 @@
     });
 
     if (above.length === 0) {
-      console.warn("[IntentGate] No suitable application form detected");
+      if (DEBUG) console.warn("[ApplyIntent] No suitable application form detected");
       return null;
     }
 
     if (above.length > 1) {
-      console.warn("[IntentGate] Multiple possible application forms detected, gate not attached");
+      if (DEBUG) console.warn("[ApplyIntent] Multiple possible application forms detected, gate not attached");
       return null;
     }
 
-    if (scored.length > 1 && scored[0].score - scored[1].score < SCORE_GAP_REQUIRED) {
-      console.warn("[IntentGate] Ambiguous form selection, gate not attached");
+      if (scored.length > 1 && scored[0].score - scored[1].score < SCORE_GAP_REQUIRED) {
+      if (DEBUG) console.warn("[ApplyIntent] Ambiguous form selection, gate not attached");
       return null;
     }
 
@@ -533,7 +533,7 @@
 
   function openGateInNewTab(config) {
     if (shouldSkipOpenDueToGuard()) {
-      console.warn("[IntentGate] Skipping gate open (recent open for this page); possible loop avoided.");
+      console.warn("[ApplyIntent] Skipping gate open (recent open for this page); possible loop avoided.");
       return null;
     }
     setRedirectGuard();
@@ -710,7 +710,7 @@
   function openGateAndHandshake(config, form, submitButton, tokenId) {
     var gateWindow = openGateInNewTab(config);
     if (!gateWindow) {
-      console.warn("[IntentGate] Popup blocked, could not open gate");
+      console.warn("[ApplyIntent] Popup blocked, could not open gate");
       return Promise.resolve();
     }
     return performHandshake(config, tokenId, gateWindow);
@@ -784,7 +784,7 @@
         console.warn(INVALID_URL_LOG);
         return;
       }
-      console.warn("[IntentGate] Failed:", err.message);
+      console.warn("[ApplyIntent] Failed:", err.message);
     });
   }
 
@@ -855,7 +855,7 @@
           console.warn(INVALID_URL_LOG);
           return;
         }
-        console.warn("[IntentGate] Verification failed:", err.message);
+        console.warn("[ApplyIntent] Verification failed:", err.message);
       });
   }
 
@@ -869,48 +869,56 @@
 
     var runPath = getPagePath();
 
-    resolveGate(config)
-      .then(function (result) {
-        if (getPagePath() !== runPath) return;
-        if (!result || result.found !== true || !result.gateId) {
-          return;
-        }
+    // First, ensure there is an application form on the page.
+    // If no form is found, we bail out early and avoid any API calls.
+    waitForForm(config).then(function (form) {
+      if (getPagePath() !== runPath) return;
 
-        var resolvedConfig = {
-          gateId: result.gateId,
-          formSelector: config.formSelector,
-          submitSelector: config.submitSelector,
-        };
-
-        return waitForForm(resolvedConfig).then(function (form) {
-          if (getPagePath() !== runPath) return;
           if (!form) {
-            if (resolvedConfig.formSelector) {
-              console.warn("[IntentGate] Form not attached: selector not found:", resolvedConfig.formSelector);
-            } else {
-              console.warn("[IntentGate] Form not attached: no suitable application form detected");
-            }
+        if (config.formSelector) {
+          console.warn("[ApplyIntent] Form not attached: selector not found:", config.formSelector);
+        } else {
+          console.warn("[ApplyIntent] Form not attached: no suitable application form detected");
+        }
+        return;
+      }
+
+      // Form exists – now resolve gate by URL and attach only if gate is found.
+      resolveGate(config)
+        .then(function (result) {
+          if (getPagePath() !== runPath) return;
+          if (!result || result.found !== true || !result.gateId) {
             return;
           }
 
+          var resolvedConfig = {
+            gateId: result.gateId,
+            formSelector: config.formSelector,
+            submitSelector: config.submitSelector,
+          };
+
           var submitButton = getSubmitButton(form, resolvedConfig);
           if (!submitButton) {
-            console.warn("[IntentGate] Submit button not found");
+            console.warn("[ApplyIntent] Submit button not found");
             return;
           }
 
           attachSubmitHandler(resolvedConfig, form, submitButton);
-          console.log("[IntentGate] Form attached successfully");
+          console.log("[ApplyIntent] Form attached successfully");
+        })
+        .catch(function (err) {
+          if (getPagePath() !== runPath) return;
+          if (isInvalidJobPageUrlError(err)) {
+            console.warn(INVALID_URL_LOG);
+            return;
+          }
+          console.warn(
+            "[ApplyIntent] Form not attached: resolve failed (" +
+              (err && err.message ? err.message : "request error") +
+              ")"
+          );
         });
-      })
-      .catch(function (err) {
-        if (getPagePath() !== runPath) return;
-        if (isInvalidJobPageUrlError(err)) {
-          console.warn(INVALID_URL_LOG);
-          return;
-        }
-        console.warn("[IntentGate] Form not attached: resolve failed (" + (err && err.message ? err.message : "request error") + ")");
-      });
+    });
   }
 
   function onUrlChange() {
